@@ -31,6 +31,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 // ── Singleton services ────────────────────────────────────────────────────────
 builder.Services.AddSingleton<FaultInjector>();
 builder.Services.AddSingleton<WorkerRegistry>();
+builder.Services.AddSingleton<CircuitBreakerManager>();
 builder.Services.AddSingleton<JobClaimer>();
 builder.Services.AddSingleton<HandlerRegistry>();
 builder.Services.AddSingleton<JobRunner>();
@@ -45,6 +46,7 @@ builder.Services.AddSingleton<IJobHandler, AlwaysFailHandler>();
 // ── Background workers ────────────────────────────────────────────────────────
 builder.Services.AddHostedService<WorkerPool>();
 builder.Services.AddHostedService<LeaseReaper>();
+builder.Services.AddHostedService<CircuitMonitor>();
 
 var app = builder.Build();
 
@@ -55,6 +57,9 @@ await using (var scope = app.Services.CreateAsyncScope())
     await using var db = await factory.CreateDbContextAsync();
     await db.Database.EnsureCreatedAsync();
     await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
+
+    var circuitBreaker = scope.ServiceProvider.GetRequiredService<CircuitBreakerManager>();
+    await circuitBreaker.InitializeAsync();
 }
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────

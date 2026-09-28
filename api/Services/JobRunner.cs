@@ -6,11 +6,13 @@ namespace Api.Services;
 
 /// <summary>
 /// Executes a claimed job: runs the handler, handles success/failure/dead-letter,
+/// integrates with CircuitBreakerManager for canary and in-flight failure handling,
 /// writes all audit rows in one SaveChanges call.
 /// </summary>
 public sealed class JobRunner(
     IDbContextFactory<AppDbContext> factory,
     HandlerRegistry handlers,
+    CircuitBreakerManager circuitBreaker,
     IOptions<ProcessingOptions> opts,
     ILogger<JobRunner> log)
 {
@@ -59,7 +61,8 @@ public sealed class JobRunner(
                 .SetProperty(j => j.Status, JobStatus.Succeeded)
                 .SetProperty(j => j.CompletedAt, now)
                 .SetProperty(j => j.LeaseExpiresAt, (DateTime?)null)
-                .SetProperty(j => j.WorkerId, (string?)null),
+                .SetProperty(j => j.WorkerId, (string?)null)
+                .SetProperty(j => j.IsCanary, false),
                 ct);
 
         if (rows == 0)
@@ -74,11 +77,16 @@ public sealed class JobRunner(
             Type = "JobSucceeded",
             JobId = job.Id,
             Dependency = job.Dependency,
-            Message = $"Completed after {job.Attempts} prior failure(s)"
+            Message = $"Completed after {job.Attempts} prior failure(s)" + (job.IsCanary ? " [CANARY]" : "")
         });
 
         await db.SaveChangesAsync(ct);
         log.LogInformation("Job {JobId} ({Type}) SUCCEEDED", job.Id, job.Type);
+
+        if (job.IsCanary)
+        {
+            await circuitBreaker.OnCanarySuccessAsync(job.Dependency, ct);
+        }
     }
 
     // ── Failure ───────────────────────────────────────────────────────────────
@@ -86,6 +94,44 @@ public sealed class JobRunner(
     private async Task HandleFailureAsync(AppDbContext db, Job job, Exception ex, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
+
+        // 1. Canary failure handling
+        if (job.IsCanary)
+        {
+            await circuitBreaker.OnCanaryFailureAsync(job.Dependency, ex, ct);
+            return;
+        }
+
+        // 2. In-flight failure when circuit is Open or HalfOpen:
+        // "once Open/HalfOpen, in-flight failures return Hold and do NOT increment Attempts and do NOT write a JobFailure row."
+        var circuitState = circuitBreaker.GetState(job.Dependency);
+        if (circuitState != CircuitState.Closed)
+        {
+            await db.Jobs
+                .Where(j => j.Id == job.Id && j.Status == JobStatus.Processing)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.Status, JobStatus.Held)
+                    .SetProperty(j => j.WorkerId, (string?)null)
+                    .SetProperty(j => j.LeaseExpiresAt, (DateTime?)null)
+                    .SetProperty(j => j.AttemptsSaved, j => j.AttemptsSaved + 1),
+                    ct);
+
+            db.EventLogs.Add(new EventLog
+            {
+                At = now,
+                Type = "JobHeld",
+                JobId = job.Id,
+                Dependency = job.Dependency,
+                Message = $"In-flight failure during {circuitState} circuit; job held without attempt penalty: [{ex.GetType().Name}] {ex.Message}"
+            });
+
+            await db.SaveChangesAsync(ct);
+            log.LogInformation("Job {JobId} held due to {CircuitState} circuit on {Dependency}",
+                job.Id, circuitState, job.Dependency);
+            return;
+        }
+
+        // 3. Normal failure when circuit is Closed
         int newAttempts = job.Attempts + 1;
         string exType = ex.GetType().Name;
         string message = ex.Message;
@@ -106,7 +152,7 @@ public sealed class JobRunner(
             OccurredAt = now
         });
 
-        // Always write JobFailed event
+        // Write JobFailed event
         db.EventLogs.Add(new EventLog
         {
             At = now,
@@ -126,6 +172,9 @@ public sealed class JobRunner(
         {
             await HandleRetryAsync(db, job, newAttempts, fingerprint, message, now, ct);
         }
+
+        // Record failure in circuit breaker (may trip circuit to Open)
+        await circuitBreaker.RecordFailureAsync(job.Dependency, ct);
     }
 
     private async Task HandleDeadAsync(
@@ -142,7 +191,8 @@ public sealed class JobRunner(
                 .SetProperty(j => j.LastFingerprint, fingerprint)
                 .SetProperty(j => j.CompletedAt, now)
                 .SetProperty(j => j.LeaseExpiresAt, (DateTime?)null)
-                .SetProperty(j => j.WorkerId, (string?)null),
+                .SetProperty(j => j.WorkerId, (string?)null)
+                .SetProperty(j => j.IsCanary, false),
                 ct);
 
         // Write DeadLetter row
@@ -187,7 +237,8 @@ public sealed class JobRunner(
                 .SetProperty(j => j.LastFingerprint, fingerprint)
                 .SetProperty(j => j.NextRunAt, nextRun)
                 .SetProperty(j => j.LeaseExpiresAt, (DateTime?)null)
-                .SetProperty(j => j.WorkerId, (string?)null),
+                .SetProperty(j => j.WorkerId, (string?)null)
+                .SetProperty(j => j.IsCanary, false),
                 ct);
 
         db.EventLogs.Add(new EventLog
@@ -203,5 +254,4 @@ public sealed class JobRunner(
         log.LogInformation("Job {JobId} retry {Attempt}/{Max} in {Delay:F1}s",
             job.Id, newAttempts, job.MaxRetries, delay.TotalSeconds);
     }
-
 }

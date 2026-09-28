@@ -8,9 +8,13 @@ namespace Api.Services;
 /// Singleton that atomically claims the next eligible job for a worker.
 /// Uses SemaphoreSlim(1,1) so only one claim attempt is in-flight at a time,
 /// preventing SQLite write contention.
+/// Excludes blocked dependencies except IsCanary jobs.
+/// Uses ExecuteUpdateAsync with WHERE Id AND Status IN (Queued, Retrying)
+/// and checks rows affected == 1, with retry up to 5 times.
 /// </summary>
 public sealed class JobClaimer(
     IDbContextFactory<AppDbContext> factory,
+    CircuitBreakerManager circuitBreaker,
     FaultInjector faults,
     IOptions<ProcessingOptions> opts,
     ILogger<JobClaimer> log)
@@ -40,50 +44,35 @@ public sealed class JobClaimer(
         {
             await using var db = await factory.CreateDbContextAsync(ct);
 
-            var downDeps = faults.Snapshot()
-                .Where(kv => kv.Value.IsDown)
-                .Select(kv => kv.Key)
+            // Blocked dependencies are those where circuit is not Closed OR fault injector is down
+            var blockedDeps = circuitBreaker.KnownDependencies
+                .Where(dep => circuitBreaker.GetState(dep) != CircuitState.Closed || faults.IsDown(dep))
                 .ToList();
 
-            // Candidate can be Queued, Retrying, or (Held if circuit is recovered / not down)
+            // Candidate must be Queued or Retrying, NextRunAt <= now,
+            // and must NOT be on a blocked dependency UNLESS it is a canary job.
             var candidate = await db.Jobs
-                .Where(j => (j.Status == JobStatus.Queued || j.Status == JobStatus.Retrying || (j.Status == JobStatus.Held && !downDeps.Contains(j.Dependency)))
-                         && j.NextRunAt <= now)
+                .Where(j => (j.Status == JobStatus.Queued || j.Status == JobStatus.Retrying)
+                         && j.NextRunAt <= now
+                         && (j.IsCanary || !blockedDeps.Contains(j.Dependency)))
                 .OrderByDescending(j => j.Priority)
                 .ThenBy(j => j.NextRunAt)
                 .FirstOrDefaultAsync(ct);
 
             if (candidate is null) return null;
 
-            // ── Circuit Breaker check ───────────────────────────────────────
-            if (candidate.Dependency != "none" && faults.IsDown(candidate.Dependency) && !candidate.IsCanary)
+            // If candidate is a normal job for a dependency that just went down, trigger circuit open and re-check
+            if (!candidate.IsCanary && candidate.Dependency != "none" && faults.IsDown(candidate.Dependency))
             {
-                // Bulk hold all Queued and Retrying jobs for this dependency
-                int heldCount = await db.Jobs
-                    .Where(j => j.Dependency == candidate.Dependency && (j.Status == JobStatus.Queued || j.Status == JobStatus.Retrying))
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(j => j.Status, JobStatus.Held)
-                        .SetProperty(j => j.AttemptsSaved, j => j.AttemptsSaved + 1), ct);
-
-                if (heldCount > 0)
-                {
-                    db.EventLogs.Add(new EventLog
-                    {
-                        At = now,
-                        Type = "CircuitOpened",
-                        Dependency = candidate.Dependency,
-                        Message = $"Circuit open for {candidate.Dependency}; {heldCount} jobs held to save retry attempts"
-                    });
-                    await db.SaveChangesAsync(ct);
-                }
-                return null;
+                await circuitBreaker.OpenCircuitAsync(candidate.Dependency, ct);
+                continue;
             }
 
-            // Atomic claim: WHERE Id = x AND Status IN (Queued, Retrying, Held)
+            // Atomic claim: WHERE Id = candidate.Id AND Status IN (Queued, Retrying)
             var leaseExpires = now.AddSeconds(_opts.LeaseSeconds);
             int rows = await db.Jobs
                 .Where(j => j.Id == candidate.Id
-                         && (j.Status == JobStatus.Queued || j.Status == JobStatus.Retrying || j.Status == JobStatus.Held))
+                         && (j.Status == JobStatus.Queued || j.Status == JobStatus.Retrying))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(j => j.Status, JobStatus.Processing)
                     .SetProperty(j => j.WorkerId, workerId)
@@ -93,7 +82,7 @@ public sealed class JobClaimer(
 
             if (rows == 0)
             {
-                // Race lost – another worker claimed it; retry
+                // Race lost – another worker claimed it; retry up to 5 times
                 log.LogDebug("Worker {WorkerId}: claim race lost on job {JobId}, retrying ({Attempt}/{Max})",
                     workerId, candidate.Id, attempt + 1, maxAttempts);
                 continue;
@@ -112,7 +101,7 @@ public sealed class JobClaimer(
                 Type = "JobClaimed",
                 JobId = claimed.Id,
                 Dependency = claimed.Dependency,
-                Message = $"Claimed by {workerId}"
+                Message = $"Claimed by {workerId}" + (claimed.IsCanary ? " [CANARY]" : "")
             });
             await db.SaveChangesAsync(ct);
 
@@ -120,8 +109,6 @@ public sealed class JobClaimer(
             return claimed;
         }
 
-        log.LogWarning("Worker {WorkerId}: could not claim a job after {Max} attempts", workerId, maxAttempts);
         return null;
     }
 }
-
