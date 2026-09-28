@@ -126,11 +126,19 @@ public static class JobEndpoints
         api.MapGet("/stats", async (IDbContextFactory<AppDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct);
-            var counts = await db.Jobs.AsNoTracking()
-                .GroupBy(j => j.Status)
-                .Select(g => new { Status = g.Key.ToString(), Count = g.Count() })
-                .ToListAsync(ct);
-            return Results.Ok(counts);
+            var stats = new
+            {
+                Total = await db.Jobs.CountAsync(ct),
+                Queued = await db.Jobs.CountAsync(j => j.Status == JobStatus.Queued, ct),
+                Processing = await db.Jobs.CountAsync(j => j.Status == JobStatus.Processing, ct),
+                Retrying = await db.Jobs.CountAsync(j => j.Status == JobStatus.Retrying, ct),
+                Held = await db.Jobs.CountAsync(j => j.Status == JobStatus.Held, ct),
+                Succeeded = await db.Jobs.CountAsync(j => j.Status == JobStatus.Succeeded, ct),
+                Dead = await db.Jobs.CountAsync(j => j.Status == JobStatus.Dead, ct),
+                FailedAttempts = await db.Jobs.SumAsync(j => j.Attempts, ct),
+                AttemptsSaved = await db.Jobs.SumAsync(j => j.AttemptsSaved, ct)
+            };
+            return Results.Ok(stats);
         });
 
         // ── GET /api/timeline?take=&jobId= ────────────────────────────────────
