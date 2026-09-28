@@ -1,0 +1,12 @@
+# Replace the handles with your team's GitHub usernames.
+/src/Jobs.Infrastructure/            @member-a
+/src/Jobs.Api/Worker/                @member-b
+/src/Jobs.Api/Handlers/              @member-b
+/src/Jobs.Api/Endpoints/             @member-c
+/src/Jobs.Api/Dtos/                  @member-c
+/tests/                              @member-c
+/dashboard/                          @member-d
+/Dockerfile                          @member-d
+/docker-compose.yml                  @member-d
+/docs/                               @member-d
+/src/Jobs.Core/                      @member-a @member-b @member-c @member-d

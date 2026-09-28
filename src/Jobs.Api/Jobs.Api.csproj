@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="..\Jobs.Core\Jobs.Core.csproj" />
+    <ProjectReference Include="..\Jobs.Infrastructure\Jobs.Infrastructure.csproj" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.*" />
+  </ItemGroup>
+</Project>

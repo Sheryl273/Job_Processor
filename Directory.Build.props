@@ -1,0 +1,9 @@
+<Project>
+  <!-- Change the target framework for the whole solution here (e.g. net9.0 / net10.0). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>

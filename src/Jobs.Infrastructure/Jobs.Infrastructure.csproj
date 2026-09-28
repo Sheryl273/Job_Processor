@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Jobs.Core\Jobs.Core.csproj" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.*" PrivateAssets="all" />
+  </ItemGroup>
+</Project>
