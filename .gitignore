@@ -7,3 +7,6 @@ node_modules/
 dist/
 .env
 appsettings.Local.json
+*.db
+*.db-shm
+*.db-wal

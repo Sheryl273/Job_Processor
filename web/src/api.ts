@@ -32,17 +32,26 @@ export interface Stats {
   attemptsSaved: number;
 }
 
-export interface Incident {
-  fingerprint: string;
-  title: string;
-  sampleMessage: string;
+export interface CircuitCard {
   dependency: string;
+  state: string; // 'Closed' | 'Open' | 'Half-Open'
   failureCount: number;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  status: string;
-  blastRadius: number;
-  isFlapping: boolean;
+  incidentOpenedTime: string | null;
+  jobsHeld: number;
+  attemptsSaved: number;
+}
+
+export interface BlastRadiusItem {
+  dependency: string;
+  circuitState: string;
+  jobTypes: string[];
+  held: number;
+  queued: number;
+  retrying: number;
+  dead: number;
+  succeeded: number;
+  totalAffected: number;
+  attemptsSavedTotal: number;
 }
 
 export interface FailureGroup {
@@ -51,8 +60,23 @@ export interface FailureGroup {
   sampleMessage: string;
   dependency: string;
   failureCount: number;
-  firstSeenAt: string;
-  lastSeenAt: string;
+  affectedJobs: number;
+  affectedJobTypes: string[];
+  firstSeen: string;
+  lastSeen: string;
+  deadCount: number;
+}
+
+export interface DeadLetter {
+  id: number;
+  jobId: string;
+  jobName: string;
+  jobType: string;
+  attempts: number;
+  finalError: string;
+  fingerprint: string;
+  failedAt: string;
+  replayedAt: string | null;
 }
 
 export interface JobFailure {
@@ -76,8 +100,8 @@ export interface EventLog {
 }
 
 export interface SimState {
-  outages: { dependency: string, isDown: boolean, endsAt: string | null }[];
-  workers: { id: string, state: string, currentJobId: string | null }[];
+  outages: { dependency: string; isDown: boolean; endsAt: string | null }[];
+  workers: { id: string; state: string; currentJobId: string | null }[];
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -95,38 +119,56 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export const api = {
   getStats: () => request<Stats>('/api/stats'),
   getJobs: (status?: string) => request<Job[]>(status ? `/api/jobs?status=${status}` : '/api/jobs'),
-  getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
+  getJob: (id: string) => request<{ job: Job; failures: JobFailure[]; events: EventLog[] }>(`/api/jobs/${id}`),
   getJobFailures: (id: string) => request<JobFailure[]>(`/api/jobs/${id}/failures`),
   getJobEvents: (id: string) => request<EventLog[]>(`/api/jobs/${id}/events`),
-  enqueueJob: (payload: any) => request<Job>('/api/jobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }),
+  enqueueJob: (payload: any) =>
+    request<Job>('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  getCircuits: () => request<CircuitCard[]>('/api/circuits'),
+  getBlastRadius: () => request<BlastRadiusItem[]>('/api/blast-radius'),
   getFailureGroups: () => request<FailureGroup[]>('/api/failure-groups'),
-  getFailureGroup: (fp: string) => request<any>(`/api/failure-groups/${fp}`),
-  getIncidents: () => request<Incident[]>('/api/incidents'),
-  
+  getDeadLetters: () => request<DeadLetter[]>('/api/jobs/dead-letter'),
+  replayDeadLetter: (id: number | string) =>
+    request<{ message: string }>(`/api/dead-letter/${id}/replay`, {
+      method: 'POST',
+    }),
+  replayGroup: (fingerprint: string) =>
+    request<{ replayed: number }>('/api/dead-letter/replay-group', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fingerprint }),
+    }),
+  getTimeline: (take: number = 150) => request<EventLog[]>(`/api/timeline?take=${take}`),
+
   // Simulator endpoints
-  simEnqueue: (payload: any) => request<{enqueued: number}>('/api/sim/enqueue', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }),
-  simOutage: (payload: any) => request<any>('/api/sim/outage', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }),
+  simEnqueue: (payload: any) =>
+    request<{ enqueued: number }>('/api/sim/enqueue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  simOutage: (payload: any) =>
+    request<any>('/api/sim/outage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   simState: () => request<SimState>('/api/sim/state'),
-  simKillWorker: (workerId?: string) => request<any>('/api/sim/kill-worker', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workerId })
-  }),
-  simReset: () => request<any>('/api/sim/reset', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({})
-  }),
+  simKillWorker: (workerId?: string) =>
+    request<any>('/api/sim/kill-worker', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workerId }),
+    }),
+  simReset: () =>
+    request<any>('/api/sim/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }),
 };
+

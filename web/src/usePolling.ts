@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 export function usePolling<T>(fn: () => Promise<T>, intervalMs = 1500) {
   const [data, setData] = useState<T | null>(null);
@@ -7,32 +7,31 @@ export function usePolling<T>(fn: () => Promise<T>, intervalMs = 1500) {
   const isMounted = useRef(true);
   const inFlight = useRef(false);
 
+  const tick = useCallback(async () => {
+    if (!isMounted.current) return;
+    if (inFlight.current) return;
+
+    inFlight.current = true;
+    try {
+      const res = await fn();
+      if (isMounted.current) {
+        setData(res);
+        setError(null);
+      }
+    } catch (err: any) {
+      if (isMounted.current) {
+        setError(err);
+      }
+    } finally {
+      if (isMounted.current) {
+        setLoading(false);
+      }
+      inFlight.current = false;
+    }
+  }, [fn]);
+
   useEffect(() => {
     isMounted.current = true;
-    
-    const tick = async () => {
-      if (!isMounted.current) return;
-      if (inFlight.current) return;
-      
-      inFlight.current = true;
-      try {
-        const res = await fn();
-        if (isMounted.current) {
-          setData(res);
-          setError(null);
-        }
-      } catch (err: any) {
-        if (isMounted.current) {
-          setError(err);
-        }
-      } finally {
-        if (isMounted.current) {
-          setLoading(false);
-        }
-        inFlight.current = false;
-      }
-    };
-
     tick(); // initial fetch
     const id = setInterval(tick, intervalMs);
 
@@ -40,7 +39,7 @@ export function usePolling<T>(fn: () => Promise<T>, intervalMs = 1500) {
       isMounted.current = false;
       clearInterval(id);
     };
-  }, [fn, intervalMs]);
+  }, [tick, intervalMs]);
 
-  return { data, error, loading };
+  return { data, error, loading, refresh: tick };
 }

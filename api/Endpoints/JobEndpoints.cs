@@ -194,27 +194,95 @@ public static class JobEndpoints
         });
 
         // ── GET /api/blast-radius ─────────────────────────────────────────────
-        api.MapGet("/blast-radius", async (IDbContextFactory<AppDbContext> factory, CancellationToken ct) =>
+        api.MapGet("/blast-radius", async (
+            IDbContextFactory<AppDbContext> factory,
+            Services.FaultInjector faults,
+            CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct);
             var jobs = await db.Jobs.AsNoTracking().ToListAsync(ct);
-            var result = jobs
-                .Where(j => j.Dependency != "none")
-                .GroupBy(j => j.Dependency)
-                .Select(g => new
+            
+            var dependencies = new[] { "payment-gateway", "email-provider", "report-database" };
+            var depMap = new Dictionary<string, string[]>
+            {
+                ["payment-gateway"] = new[] { "PAYMENT" },
+                ["email-provider"] = new[] { "EMAIL" },
+                ["report-database"] = new[] { "REPORT" }
+            };
+
+            var result = dependencies.Select(dep =>
+            {
+                var depJobs = jobs.Where(j => j.Dependency == dep).ToList();
+                bool isDown = faults.IsDown(dep);
+                int held = depJobs.Count(j => j.Status == JobStatus.Held);
+                int queued = depJobs.Count(j => j.Status == JobStatus.Queued);
+                int retrying = depJobs.Count(j => j.Status == JobStatus.Retrying);
+                int dead = depJobs.Count(j => j.Status == JobStatus.Dead);
+                int succeeded = depJobs.Count(j => j.Status == JobStatus.Succeeded);
+                int attemptsSavedTotal = depJobs.Sum(j => j.AttemptsSaved);
+                int totalAffected = held + retrying + dead;
+
+                return new
                 {
-                    Dependency = g.Key,
-                    Total = g.Count(),
-                    Dead = g.Count(j => j.Status == JobStatus.Dead),
-                    Held = g.Count(j => j.Status == JobStatus.Held),
-                    Retrying = g.Count(j => j.Status == JobStatus.Retrying)
-                })
-                .ToList();
+                    Dependency = dep,
+                    CircuitState = isDown ? "Open" : "Closed",
+                    JobTypes = depMap.GetValueOrDefault(dep, Array.Empty<string>()),
+                    Held = held,
+                    Queued = queued,
+                    Retrying = retrying,
+                    Dead = dead,
+                    Succeeded = succeeded,
+                    TotalAffected = totalAffected,
+                    AttemptsSavedTotal = attemptsSavedTotal
+                };
+            }).ToList();
+
             return Results.Ok(result);
         });
 
-        // ── GET /api/circuits (stub; populated in Part 4) ─────────────────────
-        api.MapGet("/circuits", () => Results.Ok(Array.Empty<object>()));
+        // ── GET /api/circuits ─────────────────────────────────────────────────
+        api.MapGet("/circuits", async (
+            IDbContextFactory<AppDbContext> factory,
+            Services.FaultInjector faults,
+            CancellationToken ct) =>
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var dependencies = new[] { "payment-gateway", "email-provider", "report-database" };
+            var windowStart = DateTime.UtcNow.AddSeconds(-60);
+
+            var recentFailures = await db.JobFailures.AsNoTracking()
+                .Where(f => f.OccurredAt >= windowStart)
+                .ToListAsync(ct);
+
+            var jobs = await db.Jobs.AsNoTracking()
+                .Where(j => j.Dependency != "none")
+                .ToListAsync(ct);
+
+            var events = await db.EventLogs.AsNoTracking()
+                .Where(e => e.Type == "CircuitOpened" || e.Type == "OutageStarted")
+                .OrderByDescending(e => e.At)
+                .ToListAsync(ct);
+
+            var list = dependencies.Select(dep =>
+            {
+                bool isDown = faults.IsDown(dep);
+                var depJobs = jobs.Where(j => j.Dependency == dep).ToList();
+                int failCount = recentFailures.Count(f => f.Dependency == dep);
+                var lastOutageEvent = events.FirstOrDefault(e => e.Dependency == dep);
+
+                return new
+                {
+                    Dependency = dep,
+                    State = isDown ? "Open" : "Closed",
+                    FailureCount = failCount,
+                    IncidentOpenedTime = isDown ? (lastOutageEvent?.At ?? DateTime.UtcNow) : (DateTime?)null,
+                    JobsHeld = depJobs.Count(j => j.Status == JobStatus.Held),
+                    AttemptsSaved = depJobs.Sum(j => j.AttemptsSaved)
+                };
+            }).ToList();
+
+            return Results.Ok(list);
+        });
 
         // ── POST /api/dead-letter/{id}/replay ─────────────────────────────────
         api.MapPost("/dead-letter/{id:long}/replay", async (
