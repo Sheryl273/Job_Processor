@@ -962,3 +962,271 @@ code {
   margin-top: 0.25rem;
   word-break: break-all;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POPOUT SIGNALS & NOTIFICATION MONITOR (Slow, Readable, Clickable)
+   ───────────────────────────────────────────────────────────────────────────── */
+.signals-overlay {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 12px;
+  max-width: 460px;
+  width: calc(100vw - 48px);
+  pointer-events: none;
+}
+
+.signals-toolbar {
+  pointer-events: auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(22, 27, 34, 0.95);
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  color: #8b949e;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.signals-toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.signals-toolbar select {
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #e6edf3;
+}
+
+.signals-toolbar-btn {
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.signals-toolbar-btn:hover {
+  color: #ff7b72;
+  background-color: rgba(248, 81, 73, 0.1);
+}
+
+.signal-popout-card {
+  pointer-events: auto;
+  background: rgba(22, 27, 34, 0.96);
+  border: 1px solid #30363d;
+  border-left: 5px solid var(--primary);
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.signal-popout-card:hover {
+  transform: translateY(-2px);
+  border-color: #58a6ff;
+  box-shadow: 0 12px 35px rgba(88, 166, 255, 0.2);
+}
+
+.signal-popout-card.critical { border-left-color: #f85149; }
+.signal-popout-card.warning  { border-left-color: #d29922; }
+.signal-popout-card.circuit  { border-left-color: #bc8cff; }
+.signal-popout-card.lease    { border-left-color: #f0883e; }
+.signal-popout-card.success  { border-left-color: #3fb950; }
+.signal-popout-card.info     { border-left-color: #58a6ff; }
+
+.signal-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.signal-title-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.signal-title-text {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #e6edf3;
+  letter-spacing: -0.01em;
+}
+
+.signal-timestamp {
+  font-size: 0.72rem;
+  color: #8b949e;
+  font-family: monospace;
+}
+
+.signal-reading-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: rgba(88, 166, 255, 0.2);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.4);
+  padding: 2px 6px;
+  border-radius: 4px;
+  animation: pulseReading 1.5s infinite;
+}
+
+.signal-body-text {
+  font-size: 0.85rem;
+  color: #c9d1d9;
+  line-height: 1.45;
+  margin: 0 0 10px 0;
+  word-break: break-word;
+}
+
+.signal-tags-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: 0.75rem;
+}
+
+.signal-action-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #21262d;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.signal-action-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.signal-inspect-btn {
+  background: #238636;
+  color: #fff;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.signal-inspect-btn:hover {
+  background: #2ea043;
+}
+
+.signal-tab-btn {
+  background: #21262d;
+  color: #58a6ff;
+  border: 1px solid #30363d;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.signal-tab-btn:hover {
+  background: #30363d;
+}
+
+.signal-close-icon {
+  background: none;
+  border: none;
+  color: #8b949e;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.signal-close-icon:hover {
+  color: #ff7b72;
+}
+
+.signal-progress-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.signal-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.1s linear;
+}
+
+.signal-popout-card.critical .signal-progress-fill { background: #f85149; }
+.signal-popout-card.warning  .signal-progress-fill { background: #d29922; }
+.signal-popout-card.circuit  .signal-progress-fill { background: #bc8cff; }
+.signal-popout-card.lease    .signal-progress-fill { background: #f0883e; }
+.signal-popout-card.success  .signal-progress-fill { background: #3fb950; }
+
+.timeline-feed-item.clickable {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.timeline-feed-item.clickable:hover {
+  background-color: #1f242c;
+}
+
+.inspect-hint {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #58a6ff;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timeline-feed-item.clickable:hover .inspect-hint {
+  opacity: 1;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulseReading {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+

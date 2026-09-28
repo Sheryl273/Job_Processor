@@ -79,14 +79,15 @@ async function runCheckB() {
     body: JSON.stringify({ dependency: 'payment-gateway', down: true }),
   });
 
-  // Poll until circuit becomes Open within 20s
+  // Poll until circuit becomes Open and jobs are held within 20s
   await poll(
     async () => {
       const circuits = await request('/circuits');
       const c = circuits.find((x) => x.dependency === 'payment-gateway');
-      return c && c.state === 'Open';
+      const stats = await request('/stats');
+      return c && c.state === 'Open' && stats.held > 0;
     },
-    { timeoutMs: 20000, intervalMs: 500, label: 'payment-gateway circuit becoming Open' }
+    { timeoutMs: 20000, intervalMs: 500, label: 'payment-gateway circuit becoming Open and jobs held' }
   );
 
   const deadLetters = await request('/jobs/dead-letter');

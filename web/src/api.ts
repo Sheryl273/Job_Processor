@@ -18,6 +18,7 @@ export interface Job {
   heldAt: string | null;
   lastFingerprint: string | null;
   reclaimCount: number;
+  attemptsSaved: number;
 }
 
 export interface Stats {
@@ -141,6 +142,10 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fingerprint }),
+    }),
+  retryJob: (id: string) =>
+    request<{ message: string }>(`/api/jobs/${id}/retry`, {
+      method: 'POST',
     }),
   getTimeline: (take: number = 150) => request<EventLog[]>(`/api/timeline?take=${take}`),
 
